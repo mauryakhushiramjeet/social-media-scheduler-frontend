@@ -32,12 +32,19 @@ export const CreatePostPage: React.FC = () => {
   const connectedPlatforms = accounts.filter((a) => a.status === 'CONNECTED');
 
   const validationSchema = Yup.object({
-    caption: Yup.string()
-      .min(1, 'Caption cannot be empty')
-      .required('Caption is required'),
+    caption: Yup.string().test(
+      'caption-required',
+      'Caption is required',
+      function (val) {
+        const { postType } = this.parent;
+        if (postType === 'STORY') return true;
+        return Boolean(val && val.trim().length > 0);
+      }
+    ),
     platforms: Yup.array()
       .of(Yup.string())
-      .min(1, 'Select at least one platform'),
+      .min(1, 'Select a platform')
+      .max(1, 'You can select only one account at a time'),
     postType: Yup.string()
       .oneOf(['FEED', 'REEL', 'STORY', 'CAROUSEL'])
       .required('Post format type is required'),
@@ -71,7 +78,7 @@ export const CreatePostPage: React.FC = () => {
   const formik = useFormik({
     initialValues: {
       caption: '',
-      platforms: connectedPlatforms.length > 0 ? [connectedPlatforms[0].platform.toLowerCase()] : [],
+      platforms: connectedPlatforms.length > 0 ? [connectedPlatforms[0].platform.toLowerCase()] : ['instagram'],
       postType: 'FEED' as 'FEED' | 'REEL' | 'STORY' | 'CAROUSEL',
       mediaUrls: [] as string[],
       scheduledAt: '',
@@ -80,7 +87,7 @@ export const CreatePostPage: React.FC = () => {
     validationSchema,
     onSubmit: async (values) => {
       const payload = {
-        caption: values.caption,
+        caption: values.postType === 'STORY' ? '' : values.caption.trim(),
         platforms: values.platforms,
         postType: values.postType,
         mediaUrls: values.mediaUrls,
@@ -94,16 +101,19 @@ export const CreatePostPage: React.FC = () => {
     },
   });
 
-  const togglePlatform = (platformId: string) => {
+  const selectPlatform = (platformId: string) => {
     const id = platformId.toLowerCase();
-    const current = [...formik.values.platforms];
-    const index = current.indexOf(id);
-    if (index > -1) {
-      current.splice(index, 1);
-    } else {
-      current.push(id);
+    if (formik.values.postType === 'STORY' && id !== 'instagram') {
+      return;
     }
-    formik.setFieldValue('platforms', current);
+    formik.setFieldValue('platforms', [id]);
+  };
+
+  const handlePostTypeChange = (type: 'FEED' | 'REEL' | 'STORY' | 'CAROUSEL') => {
+    formik.setFieldValue('postType', type);
+    if (type === 'STORY') {
+      formik.setFieldValue('platforms', ['instagram']);
+    }
   };
 
   const handleAddMediaUrl = () => {
@@ -133,12 +143,17 @@ export const CreatePostPage: React.FC = () => {
           </div>
 
           <form onSubmit={formik.handleSubmit} className="space-y-6">
-            {/* 1. Platform Selector */}
+            {/* 1. Platform Selector (Single Account Selection) */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="text-xs font-bold text-slate-700">
-                  Select Platforms ({formik.values.platforms.length} selected)
+                  Select Target Account (Select 1 channel)
                 </label>
+                {formik.values.postType === 'STORY' && (
+                  <span className="text-xs text-indigo-600 font-semibold">
+                    Stories are only supported on Instagram
+                  </span>
+                )}
                 {connectedPlatforms.length === 0 && (
                   <span className="text-xs text-amber-600 font-medium">
                     No connected platforms. Go to Accounts to connect channels.
@@ -151,13 +166,17 @@ export const CreatePostPage: React.FC = () => {
                   {connectedPlatforms.map((acc) => {
                     const id = acc.platform.toLowerCase();
                     const isSelected = formik.values.platforms.includes(id);
+                    const isDisabled = formik.values.postType === 'STORY' && id !== 'instagram';
                     return (
                       <button
                         key={acc.id}
                         type="button"
-                        onClick={() => togglePlatform(id)}
+                        disabled={isDisabled}
+                        onClick={() => selectPlatform(id)}
                         className={`px-3 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer flex items-center gap-2 ${
-                          isSelected
+                          isDisabled
+                            ? 'opacity-40 bg-slate-100 text-slate-400 cursor-not-allowed'
+                            : isSelected
                             ? 'bg-indigo-600 text-white shadow-xs'
                             : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80'
                         }`}
@@ -199,7 +218,7 @@ export const CreatePostPage: React.FC = () => {
                   <button
                     key={type}
                     type="button"
-                    onClick={() => formik.setFieldValue('postType', type)}
+                    onClick={() => handlePostTypeChange(type)}
                     className={`py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer text-center ${
                       formik.values.postType === type
                         ? 'bg-slate-900 text-white shadow-xs'
@@ -213,37 +232,50 @@ export const CreatePostPage: React.FC = () => {
               <p className="text-[11px] text-slate-400 mt-1">
                 {formik.values.postType === 'FEED' && 'Standard text & image post.'}
                 {formik.values.postType === 'REEL' && 'Video reel format (requires 1 video/media URL).'}
-                {formik.values.postType === 'STORY' && 'Ephemeral story format (requires 1 media URL).'}
+                {formik.values.postType === 'STORY' && 'Ephemeral story format (Instagram media only, no caption).'}
                 {formik.values.postType === 'CAROUSEL' && 'Multi-slide album (requires ≥ 2 media URLs).'}
               </p>
             </div>
 
-            {/* 3. Caption Textarea */}
-            <div>
-              <div className="flex justify-between items-center mb-1.5">
-                <label className="text-xs font-bold text-slate-700">Caption Content</label>
-                <span className="text-[11px] font-mono text-slate-400">
-                  {formik.values.caption.length} characters
-                </span>
+            {/* 3. Caption Textarea (Hidden for Story mode) */}
+            {formik.values.postType === 'STORY' ? (
+              <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-start gap-3">
+                <div className="text-xs space-y-1">
+                  <h4 className="font-bold text-indigo-950">
+                    Instagram Story Mode (Media Only)
+                  </h4>
+                  <p className="text-indigo-800 leading-relaxed">
+                    Instagram Stories are purely visual media. Captions are not supported on Stories, so no caption is needed. Please add your media URL below.
+                  </p>
+                </div>
               </div>
-              <textarea
-                id="caption"
-                name="caption"
-                rows={4}
-                placeholder="Write your post caption..."
-                onChange={formik.handleChange}
-                onBlur={formik.handleBlur}
-                value={formik.values.caption}
-                className={`w-full p-3.5 bg-slate-50 border rounded-2xl text-sm transition-all focus:bg-white focus:outline-hidden ${
-                  formik.touched.caption && formik.errors.caption
-                    ? 'border-rose-300 focus:ring-2 focus:ring-rose-100'
-                    : 'border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
-                }`}
-              />
-              {formik.touched.caption && formik.errors.caption && (
-                <p className="mt-1 text-xs text-rose-600">{formik.errors.caption}</p>
-              )}
-            </div>
+            ) : (
+              <div>
+                <div className="flex justify-between items-center mb-1.5">
+                  <label className="text-xs font-bold text-slate-700">Caption Content</label>
+                  <span className="text-[11px] font-mono text-slate-400">
+                    {formik.values.caption.length} characters
+                  </span>
+                </div>
+                <textarea
+                  id="caption"
+                  name="caption"
+                  rows={4}
+                  placeholder="Write your post caption..."
+                  onChange={formik.handleChange}
+                  onBlur={formik.handleBlur}
+                  value={formik.values.caption}
+                  className={`w-full p-3.5 bg-slate-50 border rounded-2xl text-sm transition-all focus:bg-white focus:outline-hidden ${
+                    formik.touched.caption && formik.errors.caption
+                      ? 'border-rose-300 focus:ring-2 focus:ring-rose-100'
+                      : 'border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100'
+                  }`}
+                />
+                {formik.touched.caption && formik.errors.caption && (
+                  <p className="mt-1 text-xs text-rose-600">{formik.errors.caption}</p>
+                )}
+              </div>
+            )}
 
             {/* 4. Media URLs Input */}
             <div>

@@ -8,6 +8,7 @@ import { DashboardLayout } from '../components/DashboardLayout';
 import { ChannelsGrid } from '../components/ChannelsGrid';
 import { PostComposer } from '../components/PostComposer';
 import { PostsFeed } from '../components/PostsFeed';
+import { SUPPORTED_PLATFORMS } from '../constants/apiEndpoints';
 import {
   Layers,
   CalendarClock,
@@ -64,7 +65,7 @@ export const DashboardPage: React.FC = () => {
                   <h3 className="text-2xl font-extrabold text-zinc-900 dark:text-zinc-100 font-mono">
                     {connectedChannels.length}
                   </h3>
-                  <span className="text-[11px] text-zinc-400">/ 13 networks</span>
+                  <span className="text-[11px] text-zinc-400">/ {SUPPORTED_PLATFORMS.length} networks</span>
                 </div>
               </div>
               <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">

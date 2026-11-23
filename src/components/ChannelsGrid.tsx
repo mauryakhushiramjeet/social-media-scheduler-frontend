@@ -4,6 +4,7 @@ import type { AppDispatch, RootState } from '../store';
 import { connectSocialAccount, disconnectSocialAccount, syncSocialAccounts } from '../store/socialSlice';
 import { SUPPORTED_PLATFORMS } from '../constants/apiEndpoints';
 import { useAuth } from '../context/AuthContext';
+import toast from 'react-hot-toast';
 import {
   RefreshCw,
   CheckCircle2,
@@ -36,6 +37,15 @@ export const ChannelsGrid: React.FC<ChannelsGridProps> = ({ compact = false }) =
   const handleConnect = (platformId: string, platformName: string) => {
     executeWithAuth(
       async () => {
+        if (platformId === 'instagram') {
+          toast(
+            'Instagram Note: Meta requires an Instagram Creator/Business account. When prompted to convert, click "Continue" or "Convert".',
+            {
+              icon: '📸',
+              duration: 6000,
+            }
+          );
+        }
         await dispatch(connectSocialAccount(platformId));
       },
       {
@@ -203,14 +213,23 @@ export const ChannelsGrid: React.FC<ChannelsGridProps> = ({ compact = false }) =
                       {platform.icon}
                     </div>
                     <div>
-                      <h3 className="font-bold text-xs text-zinc-900 dark:text-zinc-100">
-                        {platform.name}
-                      </h3>
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="font-bold text-xs text-zinc-900 dark:text-zinc-100">
+                          {platform.name}
+                        </h3>
+                        {platform.id === 'instagram' && !isConnected && (
+                          <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-800">
+                            Creator / Business
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
                         {isConnected ? (
                           <span className="text-emerald-600 dark:text-emerald-400 font-medium truncate inline-block max-w-[120px]">
                             @{connectedAcc?.username || connectedAcc?.displayName || 'linked'}
                           </span>
+                        ) : platform.id === 'instagram' ? (
+                          'Requires free Creator/Business account'
                         ) : (
                           'Ready to connect'
                         )}

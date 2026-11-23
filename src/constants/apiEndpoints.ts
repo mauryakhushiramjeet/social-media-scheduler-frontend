@@ -18,6 +18,9 @@ export const API_ENDPOINTS = {
     UPDATE: (id: string) => `/api/posts/${id}`,
     DELETE: (id: string) => `/api/posts/${id}`,
   },
+  MEDIA: {
+    UPLOAD: '/api/media/upload',
+  },
 } as const;
 
 export const SUPPORTED_PLATFORMS = [
@@ -25,7 +28,6 @@ export const SUPPORTED_PLATFORMS = [
   { id: 'instagram', name: 'Instagram', icon: '📸' },
   { id: 'twitter', name: 'X / Twitter', icon: '🐦' },
   { id: 'linkedin', name: 'LinkedIn', icon: '💼' },
-  { id: 'tiktok', name: 'TikTok', icon: '🎵' },
   { id: 'youtube', name: 'YouTube', icon: '▶️' },
   { id: 'pinterest', name: 'Pinterest', icon: '📌' },
   { id: 'reddit', name: 'Reddit', icon: '🤖' },

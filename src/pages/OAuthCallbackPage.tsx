@@ -12,6 +12,19 @@ export const OAuthCallbackPage: React.FC = () => {
 
   useEffect(() => {
     const handleSync = async () => {
+      // Check for OAuth cancellation or error params in URL
+      const searchParams = new URLSearchParams(window.location.search);
+      const errorMsg =
+        searchParams.get('error_description') ||
+        searchParams.get('error') ||
+        searchParams.get('message');
+
+      if (errorMsg) {
+        toast.error(`Authorization canceled: ${errorMsg}`);
+        navigate('/accounts', { replace: true });
+        return;
+      }
+
       try {
         await dispatch(syncSocialAccounts()).unwrap();
         toast.success('Social account connected and synchronized!');

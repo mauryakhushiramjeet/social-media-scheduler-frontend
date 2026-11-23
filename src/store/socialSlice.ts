@@ -44,12 +44,13 @@ export const connectSocialAccount = createAsyncThunk(
   'social/connect',
   async (platform: string, { rejectWithValue }) => {
     try {
-      const response: any = await api.post(API_ENDPOINTS.SOCIAL.CONNECT, { platform });
+      const redirectUrl = `${window.location.origin}/social/callback`;
+      const response: any = await api.post(API_ENDPOINTS.SOCIAL.CONNECT, { platform, redirectUrl });
       const authUrl = response.data?.url;
       if (authUrl) {
-        // Open authorization link in a new window/popup
-        window.open(authUrl, '_blank', 'width=600,height=700');
         toast.success(`Redirecting to ${platform} authorization...`);
+        // Navigate directly to avoid modern browser popup blockers blocking async window.open
+        window.location.href = authUrl;
       }
       return { platform, url: authUrl };
     } catch (err: any) {

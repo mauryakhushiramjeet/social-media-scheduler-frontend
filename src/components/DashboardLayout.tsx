@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSelector } from 'react-redux';
 import type { RootState } from '../store';
+import { SUPPORTED_PLATFORMS } from '../constants/apiEndpoints';
 import {
   Share2,
   LayoutDashboard,
@@ -142,7 +143,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
               </div>
               {!isSidebarCollapsed && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-mono">
-                  {connectedCount}/13
+                  {connectedCount}/{SUPPORTED_PLATFORMS.length}
                 </span>
               )}
             </button>

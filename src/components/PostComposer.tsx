@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
+import axios from 'axios';
 import { useDispatch, useSelector } from 'react-redux';
 import type { AppDispatch, RootState } from '../store';
 import { createPost } from '../store/postSlice';
-import { SUPPORTED_PLATFORMS } from '../constants/apiEndpoints';
+import { SUPPORTED_PLATFORMS, API_BASE_URL } from '../constants/apiEndpoints';
 import { useAuth } from '../context/AuthContext';
 import {
   Send,
@@ -21,6 +22,7 @@ import {
   FileVideo,
   PlayCircle,
   Video,
+  RefreshCw,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -34,48 +36,37 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
   const { executeWithAuth, isAuthenticated } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form State
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([
-    'instagram',
-    'twitter',
-    'linkedin',
-  ]);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['instagram']);
   const [postType, setPostType] = useState<'FEED' | 'REEL' | 'STORY' | 'CAROUSEL'>('FEED');
-  const [caption, setCaption] = useState<string>(
-    'Excited to share our latest product milestone! 🚀 Streamlining multi-network publishing and growth.'
-  );
+  const [caption, setCaption] = useState<string>('');
 
-  // Media state
   const [mediaUrl, setMediaUrl] = useState<string>('');
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string>('');
   const [isVideo, setIsVideo] = useState<boolean>(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState<boolean>(false);
 
-  // Scheduling state
   const [isScheduled, setIsScheduled] = useState<boolean>(false);
   const [scheduledAt, setScheduledAt] = useState<string>('');
 
   const charLimit = 280;
   const remainingChars = charLimit - caption.length;
 
-  const togglePlatform = (id: string) => {
-    setSelectedPlatforms((prev) =>
-      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
-    );
-  };
-
-  const selectAllPlatforms = () => {
-    if (selectedPlatforms.length === SUPPORTED_PLATFORMS.length) {
-      setSelectedPlatforms([]);
-    } else {
-      setSelectedPlatforms(SUPPORTED_PLATFORMS.map((p) => p.id));
+  const selectPlatform = (id: string) => {
+    if (postType === 'STORY' && id !== 'instagram') {
+      toast.error('Stories can only be posted to Instagram.');
+      return;
     }
+    setSelectedPlatforms([id]);
   };
 
   const handlePostTypeChange = (type: 'FEED' | 'REEL' | 'STORY' | 'CAROUSEL') => {
     setPostType(type);
     if (type === 'REEL') {
       setIsVideo(true);
+    }
+    if (type === 'STORY') {
+      setSelectedPlatforms(['instagram']);
     }
   };
 
@@ -87,25 +78,52 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
     setCaption((prev) => prev + ' ' + tag);
   };
 
-  // Handle local file selection (Reel video or image)
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle local file selection with immediate upload to backend & Zernio
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const isVideoFile = file.type.startsWith('video/');
     setIsVideo(isVideoFile);
     setMediaFile(file);
+    setIsUploadingMedia(true);
 
-    // Create a local blob preview URL
-    const previewUrl = URL.createObjectURL(file);
-    setMediaPreview(previewUrl);
-    setMediaUrl(''); // prioritize file
+    const formData = new FormData();
+    formData.append('file', file);
 
-    toast.success(
-      isVideoFile
-        ? `Reel video "${file.name}" selected (${(file.size / (1024 * 1024)).toFixed(1)} MB)`
-        : `Image "${file.name}" selected`
-    );
+    const uploadToast = toast.loading(`Uploading ${isVideoFile ? 'video' : 'image'} to cloud storage...`);
+
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.post(`${API_BASE_URL}/api/media/upload`, formData, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      // The real public HTTPS URL returned by backend & Zernio
+      const publicUrl = response.data?.data?.url || response.data?.url;
+
+      if (!publicUrl) {
+        throw new Error('Upload succeeded but no public URL was returned');
+      }
+
+      // Store the real public HTTPS URL so it gets sent in mediaUrls
+      setMediaUrl(publicUrl);
+      setMediaPreview(publicUrl);
+      toast.success(
+        `${isVideoFile ? 'Video' : 'Image'} uploaded successfully!`,
+        { id: uploadToast }
+      );
+    } catch (error: any) {
+      console.error('Upload failed:', error);
+      const errMsg = error.response?.data?.message || error.message || 'File upload failed';
+      toast.error(errMsg, { id: uploadToast });
+      handleRemoveMedia();
+    } finally {
+      setIsUploadingMedia(false);
+    }
   };
 
   const handleUrlChange = (url: string) => {
@@ -140,17 +158,26 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
     e.preventDefault();
 
     if (selectedPlatforms.length === 0) {
-      toast.error('Please select at least one target channel.');
+      toast.error('Please select a target channel.');
       return;
     }
 
-    if (!caption.trim()) {
+    if (isUploadingMedia) {
+      toast.error('Please wait for the media file to finish uploading.');
+      return;
+    }
+
+    if (postType !== 'STORY' && !caption.trim()) {
       toast.error('Post caption cannot be empty.');
       return;
     }
 
-    if (postType === 'REEL' && !mediaPreview && !mediaUrl) {
-      toast.error('Please choose a video file or provide a video URL for your Reel.');
+    if ((postType === 'REEL' || postType === 'STORY') && !mediaUrl) {
+      toast.error(
+        postType === 'STORY'
+          ? 'Please choose an image or video file for your Instagram Story.'
+          : 'Please choose a video file or provide a video URL for your Reel.'
+      );
       return;
     }
 
@@ -162,12 +189,12 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
     // Intercept with Auth if guest without losing form values
     executeWithAuth(
       async () => {
-        const finalUrl = mediaUrl.trim() || mediaPreview || '';
+        // Send only the real public HTTPS URL (never a blob: URL)
         const payload = {
-          caption,
+          caption: postType === 'STORY' ? '' : caption.trim(),
           platforms: selectedPlatforms,
           postType,
-          mediaUrls: finalUrl ? [finalUrl] : [],
+          mediaUrls: mediaUrl.trim() ? [mediaUrl.trim()] : [],
           scheduledAt: isScheduled && scheduledAt ? new Date(scheduledAt).toISOString() : null,
         };
 
@@ -184,12 +211,13 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
       {
         title: isScheduled ? 'Schedule Your Post' : 'Publish Your Post',
         subtitle:
-          'Sign in or register to dispatch your post across the selected channels. Your draft has been preserved.',
+          'Sign in or register to dispatch your post to the selected channel. Your draft has been preserved.',
       }
     );
   };
 
   const isReelMode = postType === 'REEL';
+  const isStoryMode = postType === 'STORY';
 
   return (
     <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-5 sm:p-7 shadow-xs">
@@ -202,41 +230,48 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
                 Post Composer
               </h2>
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-100 dark:border-indigo-800">
-                Multi-Channel
+                Single Channel
               </span>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              Draft, choose media or reels, and publish or schedule across your channels.
+              Draft, choose media or reels, and publish or schedule to your selected channel.
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={selectAllPlatforms}
-            className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 self-start sm:self-auto cursor-pointer"
-          >
-            {selectedPlatforms.length === SUPPORTED_PLATFORMS.length
-              ? 'Deselect All'
-              : 'Select All Channels'}
-          </button>
+          <div className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 self-start sm:self-auto flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>1 Account Selected</span>
+          </div>
         </div>
 
-        {/* 1. Target Platforms Selector */}
+        {/* 1. Target Platforms Selector (Single Account Selection) */}
         <div>
-          <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300 mb-2">
-            Target Channels ({selectedPlatforms.length} selected)
-          </label>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
+              Target Channel <span className="font-normal text-zinc-400 text-[11px]">(Select 1 account to share)</span>
+            </label>
+            {isStoryMode && (
+              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
+                📸 Stories only on Instagram
+              </span>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             {SUPPORTED_PLATFORMS.map((platform) => {
               const isSelected = selectedPlatforms.includes(platform.id);
+              const isDisabled = isStoryMode && platform.id !== 'instagram';
               return (
                 <button
                   type="button"
                   key={platform.id}
-                  onClick={() => togglePlatform(platform.id)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${isSelected
-                    ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-600/30 ring-2 ring-indigo-500/20'
-                    : 'bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                  disabled={isDisabled}
+                  onClick={() => selectPlatform(platform.id)}
+                  title={isDisabled ? 'Stories are only supported on Instagram' : platform.name}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${isDisabled
+                    ? 'opacity-35 bg-zinc-100 dark:bg-zinc-800/50 text-zinc-400 cursor-not-allowed'
+                    : isSelected
+                      ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-600/30 ring-2 ring-indigo-500/20'
+                      : 'bg-zinc-100 dark:bg-zinc-800/80 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
                     }`}
                 >
                   <span>{platform.icon}</span>
@@ -284,73 +319,93 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
           </div>
         </div>
 
-        {/* 3. Caption Textarea */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <label className="font-bold text-zinc-700 dark:text-zinc-300">Caption</label>
-            <span
-              className={`font-mono text-[11px] font-semibold ${remainingChars < 0 ? 'text-rose-500' : 'text-zinc-400'
-                }`}
-            >
-              {remainingChars} chars remaining
-            </span>
-          </div>
-
-          <div className="relative">
-            <textarea
-              rows={4}
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-              placeholder={
-                isReelMode
-                  ? "Write a caption for your Reel / Short..."
-                  : "What's happening? Write your cross-channel update..."
-              }
-              className="w-full p-3.5 text-xs sm:text-sm bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/80 rounded-2xl text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
-            />
-          </div>
-
-          {/* Quick Helper Chips (Hashtags & Emojis) */}
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1">
-                <Hash className="w-3 h-3" /> Tags:
-              </span>
-              {['#launch', '#growth', '#updates', '#tech', '#ai'].map((tag) => (
-                <button
-                  type="button"
-                  key={tag}
-                  onClick={() => insertHashtag(tag)}
-                  className="px-2 py-0.5 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg transition-colors cursor-pointer"
-                >
-                  {tag}
-                </button>
-              ))}
+        {/* 3. Caption Textarea (Hidden for Story mode) */}
+        {isStoryMode ? (
+          <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-800/60 flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-indigo-600/10 dark:bg-indigo-400/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+              <Compass className="w-4 h-4" />
             </div>
-
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1">
-                <Smile className="w-3 h-3" /> Emojis:
-              </span>
-              {['🚀', '✨', '💡', '🔥', '📢'].map((em) => (
-                <button
-                  type="button"
-                  key={em}
-                  onClick={() => insertEmoji(em)}
-                  className="p-1 text-xs hover:scale-125 transition-transform cursor-pointer"
-                >
-                  {em}
-                </button>
-              ))}
+            <div className="text-xs space-y-1">
+              <h4 className="font-bold text-zinc-900 dark:text-zinc-100">
+                Instagram Story Mode (Media Only)
+              </h4>
+              <p className="text-zinc-600 dark:text-zinc-400 leading-relaxed">
+                Instagram Stories are purely visual media. The Instagram Story API does not support text captions, so no caption is needed. Attach your photo or video below to publish directly to your Instagram Story!
+              </p>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <label className="font-bold text-zinc-700 dark:text-zinc-300">Caption</label>
+              <span
+                className={`font-mono text-[11px] font-semibold ${remainingChars < 0 ? 'text-rose-500' : 'text-zinc-400'
+                  }`}
+              >
+                {remainingChars} chars remaining
+              </span>
+            </div>
+
+            <div className="relative">
+              <textarea
+                rows={4}
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+                placeholder={
+                  isReelMode
+                    ? "Write a caption for your Reel / Short..."
+                    : "What's happening? Write your post caption..."
+                }
+                className="w-full p-3.5 text-xs sm:text-sm bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/80 rounded-2xl text-zinc-800 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+              />
+            </div>
+
+            {/* Quick Helper Chips (Hashtags & Emojis) */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1">
+                  <Hash className="w-3 h-3" /> Tags:
+                </span>
+                {['#launch', '#growth', '#updates', '#tech', '#ai'].map((tag) => (
+                  <button
+                    type="button"
+                    key={tag}
+                    onClick={() => insertHashtag(tag)}
+                    className="px-2 py-0.5 text-[11px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg transition-colors cursor-pointer"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-1">
+                <span className="text-[11px] font-bold text-zinc-400 flex items-center gap-1">
+                  <Smile className="w-3 h-3" /> Emojis:
+                </span>
+                {['🚀', '✨', '💡', '🔥', '📢'].map((em) => (
+                  <button
+                    type="button"
+                    key={em}
+                    onClick={() => insertEmoji(em)}
+                    className="p-1 text-xs hover:scale-125 transition-transform cursor-pointer"
+                  >
+                    {em}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 4. Media & Reel Chooser (Simple & Direct) */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label className="block text-xs font-bold text-zinc-700 dark:text-zinc-300">
-              {isReelMode ? 'Reel Video Attachment' : 'Media Attachment (Image or Video)'}
+              {isReelMode
+                ? 'Reel Video Attachment'
+                : isStoryMode
+                  ? 'Story Media Attachment (Photo or Video)'
+                  : 'Media Attachment (Image or Video)'}
             </label>
             {mediaPreview && (
               <button
@@ -380,13 +435,24 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
             <button
               type="button"
+              disabled={isUploadingMedia}
               onClick={() => fileInputRef.current?.click()}
-              className="sm:col-span-4 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700 transition-all cursor-pointer"
+              className="sm:col-span-4 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-100 border border-zinc-200 dark:border-zinc-700 transition-all cursor-pointer disabled:opacity-60"
             >
-              {isReelMode ? (
+              {isUploadingMedia ? (
+                <>
+                  <RefreshCw className="w-4 h-4 text-indigo-600 dark:text-indigo-400 animate-spin" />
+                  <span>Uploading Media...</span>
+                </>
+              ) : isReelMode ? (
                 <>
                   <FileVideo className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span>Choose Reel Video</span>
+                </>
+              ) : isStoryMode ? (
+                <>
+                  <Upload className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                  <span>Choose Story Media</span>
                 </>
               ) : (
                 <>
@@ -409,7 +475,9 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
                 placeholder={
                   isReelMode
                     ? 'Or paste Reel / Video URL (e.g. https://...video.mp4)'
-                    : 'Or paste Image / Video URL'
+                    : isStoryMode
+                      ? 'Or paste Story Image / Video URL'
+                      : 'Or paste Image / Video URL'
                 }
                 className="w-full pl-9 pr-3 py-2.5 text-xs bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700/80 rounded-xl text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               />
@@ -540,20 +608,22 @@ export const PostComposer: React.FC<PostComposerProps> = ({ onPostCreated }) => 
 
           <button
             type="submit"
-            disabled={creating}
+            disabled={creating || isUploadingMedia}
             className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-2xl text-xs sm:text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 active:scale-95 transition-all shadow-md shadow-indigo-600/25 cursor-pointer disabled:opacity-60"
           >
             {creating ? (
               <span>Publishing...</span>
+            ) : isUploadingMedia ? (
+              <span>Uploading Media...</span>
             ) : isScheduled ? (
               <>
                 <Calendar className="w-4 h-4" />
-                <span>Schedule {isReelMode ? 'Reel' : 'Post'}</span>
+                <span>Schedule {isReelMode ? 'Reel' : isStoryMode ? 'Story' : 'Post'}</span>
               </>
             ) : (
               <>
                 <Send className="w-4 h-4" />
-                <span>Publish {isReelMode ? 'Reel' : 'Post'} Now</span>
+                <span>Publish {isReelMode ? 'Reel' : isStoryMode ? 'Story' : 'Post'} Now</span>
               </>
             )}
           </button>
